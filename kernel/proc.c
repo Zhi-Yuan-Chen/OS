@@ -277,6 +277,8 @@ fork(void)
 
   np->parent = p;
 
+  np->mask=p->mask;
+
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
 
@@ -692,4 +694,27 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+uint64 proc_num(void){
+  struct proc *proc_pointer;
+  int count=0;
+  for(proc_pointer=proc;proc_pointer<&proc[NPROC];proc_pointer++){
+
+      if(proc_pointer->state==UNUSED){
+        count++;
+      }
+      else{
+        continue;
+      }
+  }
+  return count;
+}
+
+int free_fd(void){
+  int fd,count=0;
+  for(fd=0;fd<NOFILE;fd++){
+    if(myproc()->ofile[fd]==0){ count++;}
+  }
+  return count;
 }

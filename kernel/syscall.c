@@ -104,6 +104,8 @@ extern uint64 sys_unlink(void);
 extern uint64 sys_wait(void);
 extern uint64 sys_write(void);
 extern uint64 sys_uptime(void);
+extern uint64 sys_trace(void);
+extern uint64 sys_sysinfo(void);
 
 static uint64 (*syscalls[])(void) = {
 [SYS_fork]    sys_fork,
@@ -127,17 +129,33 @@ static uint64 (*syscalls[])(void) = {
 [SYS_link]    sys_link,
 [SYS_mkdir]   sys_mkdir,
 [SYS_close]   sys_close,
+[SYS_trace]   sys_trace,
+[SYS_sysinfo] sys_sysinfo,
 };
 
+static char syscall_collection[23][10] = 
+{"fork", "exit", "wait", "pipe", "read", "kill", "exec", "fstat", "chdir", "dup", "getpid",
+                             "sbrk", "sleep", "uptime", "open", "write", "mknod", "unlink", 
+                             "link", "mkdir", "close", "trace","sysinfo"};
+
 void
-syscall(void)
+syscall(void)/*实验二涉及的代码均使用**进行注释*/
 {
   int num;
+  int argument_num1;/*记录第一个参数*/
   struct proc *p = myproc();
-
+  argument_num1=p->trapframe->a0;/*第一个参数*/
   num = p->trapframe->a7;
   if(num > 0 && num < NELEM(syscalls) && syscalls[num]) {
     p->trapframe->a0 = syscalls[num]();
+    /*判断mask是否对当前调用号覆盖完全*/
+    int num_deal=1<<num;
+    int p_mask=p->mask;
+    if(p_mask>0){
+      if(num_deal & p_mask){
+        printf("%d: sys_%s(%d) -> %d\n", p->pid, syscall_collection[num-1], argument_num1, p->trapframe->a0);
+        }
+    }
   } else {
     printf("%d %s: unknown sys call %d\n",
             p->pid, p->name, num);

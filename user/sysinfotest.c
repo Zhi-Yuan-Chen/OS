@@ -87,6 +87,8 @@ testcall() {
 
   if (sysinfo((struct sysinfo *) 0xeaeb0b5b00002f5e) !=  0xffffffffffffffff) {
     printf("FAIL: sysinfo succeeded with bad argument\n");
+    int n=sysinfo((struct sysinfo *) 0xeaeb0b5b00002f5e);
+    printf("%d\n",&n);
     exit(1);
   }
 }
