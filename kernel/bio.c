@@ -23,14 +23,19 @@
 #include "fs.h"
 #include "buf.h"
 
+#define hash_buckets_num 13
+
 struct {
-  struct spinlock lock;
+  struct spinlock lock[hash_buckets_num];
   struct buf buf[NBUF];
 
   // Linked list of all buffers, through prev/next.
   // Sorted by how recently the buffer was used.
   // head.next is most recent, head.prev is least.
-  struct buf head;
+  // struct buf head;
+
+  struct buf hash_buckets[hash_buckets_num];
+  /*每个哈希桶序列一个linklist和一个lock*/
 } bcache;
 
 void
@@ -38,17 +43,30 @@ binit(void)
 {
   struct buf *b;
 
-  initlock(&bcache.lock, "bcache");
-
+  // initlock(&bcache.lock, "bcache");
+  /*初始化哈希桶*/
+  for (int i = 0; i < hash_buckets_num; i++)
+  {
+    /*队列前后均为自己*/
+    bcache.hash_buckets[i].prev=&bcache.hash_buckets[i];
+    bcache.hash_buckets[i].next=&bcache.hash_buckets[i];
+    /*初始化🔒*/
+    initlock(&bcache.lock[i],"bcache");
+  }
+  
   // Create linked list of buffers
-  bcache.head.prev = &bcache.head;
-  bcache.head.next = &bcache.head;
+  // bcache.head.prev = &bcache.head;
+  // bcache.head.next = &bcache.head;
+
   for(b = bcache.buf; b < bcache.buf+NBUF; b++){
-    b->next = bcache.head.next;
-    b->prev = &bcache.head;
+    int hash_code=(b->blockno)% 13;
+    /*磁盘块号%13为对应的哈希桶号*/
+    b->next = bcache.hash_buckets[hash_code].next;
+    b->prev = &bcache.hash_buckets[hash_code];
+    /*把b放进hash_buckets[hash_code]中*/
     initsleeplock(&b->lock, "buffer");
-    bcache.head.next->prev = b;
-    bcache.head.next = b;
+    bcache.hash_buckets[hash_code].next->prev = b;
+    bcache.hash_buckets[hash_code].next = b;
   }
 }
 
@@ -59,11 +77,14 @@ static struct buf*
 bget(uint dev, uint blockno)
 {
   struct buf *b;
-
+  int hash_code=(b->blockno)% 13;
+  /*磁盘块号%13为对应的哈希桶号*/
   acquire(&bcache.lock);
 
   // Is the block already cached?
-  for(b = bcache.head.next; b != &bcache.head; b = b->next){
+  for(b = bcache.hash_buckets[hash_code].next; b != &bcache.hash_buckets[hash_code]; b = b->next)
+  /*查找自己的哈希桶区有没有对应的扇区*/
+  {
     if(b->dev == dev && b->blockno == blockno){
       b->refcnt++;
       release(&bcache.lock);
