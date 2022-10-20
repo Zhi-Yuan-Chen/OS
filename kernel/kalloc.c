@@ -30,12 +30,10 @@ void
 kinit()
 {
   // initlock(&kmem.lock, "kmem");
-
   /*初始化NCPU个锁*/
   for(int i=0;i<NCPU;i++){
     initlock(&CPU_kmems[i].lock,"kmem");
   }
-
   freerange(end, (void*)PHYSTOP);
 }
 
@@ -75,9 +73,8 @@ kfree(void *pa)
   /*头插法把被释放的块插进相应的freelist*/
   acquire(&CPU_kmems[now_CPU_id].lock);
   r->next = CPU_kmems[now_CPU_id].freelist;
-  CPU_kmems[now_CPU_id].freelist = r;
-  
-  release(&kmem.lock);
+  CPU_kmems[now_CPU_id].freelist = r; 
+  release(&CPU_kmems[now_CPU_id].lock);
 }
 
 // Allocate one 4096-byte page of physical memory.
@@ -95,8 +92,9 @@ kalloc(void)
 
   acquire(&CPU_kmems[now_CPU_id].lock);
   struct run *r = CPU_kmems[now_CPU_id].freelist;
-  if(r)/*有空内存直接用*/
+  if(r)/*有空内存直接用*/{
     CPU_kmems[now_CPU_id].freelist = r->next;
+  }
   else/*偷内存*/
   {
     for (int i = 0; i < 8; i++)
@@ -115,9 +113,7 @@ kalloc(void)
       {
         continue;
       }
-      
     }
-    
   }
   release(&CPU_kmems[now_CPU_id].lock);
 
