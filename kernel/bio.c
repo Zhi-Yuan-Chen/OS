@@ -79,7 +79,7 @@ bget(uint dev, uint blockno)
   struct buf *b;
   int hash_code=(b->blockno)% 13;
   /*磁盘块号%13为对应的哈希桶号*/
-  acquire(&bcache.lock);
+  acquire(&bcache.lock[hash_code]);
 
   // Is the block already cached?
   for(b = bcache.hash_buckets[hash_code].next; b != &bcache.hash_buckets[hash_code]; b = b->next)
@@ -87,7 +87,7 @@ bget(uint dev, uint blockno)
   {
     if(b->dev == dev && b->blockno == blockno){
       b->refcnt++;
-      release(&bcache.lock);
+      release(&bcache.lock[hash_code]);
       acquiresleep(&b->lock);
       return b;
     }
@@ -106,6 +106,34 @@ bget(uint dev, uint blockno)
       return b;
     }
   }
+
+  /*偷🔒*/
+  for (int i = 0; i < hash_buckets_num; i++)
+  {
+    if(i!=hash_code){
+      acquire(&bcache.lock[i]);
+      for (b =bcache.hash_buckets[i].prev; b!=&bcache.hash_buckets[i];b=b->prev)
+      {
+        if(b->refcnt==0){ 
+          /*可偷*/
+          b->refcnt++;
+          b->dev=dev;
+          b->blockno=blockno;
+          b->valid=0;
+          /*确保b从磁盘读取块数据而不是使用之前buffer的数据*/
+
+          b->next->prev=b->prev;
+          b->prev->next=b->next;
+          /*先把b摘下来*/
+
+          
+          /*再把b接上去*/
+        }
+      }
+      release(&bcache.lock[i]);
+    }
+  }
+  release(&bcache.lock[hash_code]);
   panic("bget: no buffers");
 }
 
