@@ -37,8 +37,7 @@ kinit()
   freerange(end, (void*)PHYSTOP);
 }
 
-void
-freerange(void *pa_start, void *pa_end)
+void freerange(void *pa_start, void *pa_end)
 {
   char *p;
   p = (char*)PGROUNDUP((uint64)pa_start);
@@ -122,12 +121,12 @@ kalloc(void)
   return (void*)r;
 }
 
-uint64 free_mem(void){
-  int len=0;
-  struct run *run_pointer=kmem.freelist;;
-  while(run_pointer){
-    len++;
-    run_pointer=run_pointer->next;
-  }
-  return len*PGSIZE;
-}
+// uint64 free_mem(void){
+//   int len=0;
+//   struct run *run_pointer=kmem.freelist;;
+//   while(run_pointer){
+//     len++;
+//     run_pointer=run_pointer->next;
+//   }
+//   return len*PGSIZE;
+// }

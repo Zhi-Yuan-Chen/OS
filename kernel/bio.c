@@ -55,7 +55,7 @@ binit(void)
   // bcache.head.next = &bcache.head;
 
   for(b = bcache.buf; b < bcache.buf+NBUF; b++){
-    int hash_code=(b->blockno)% 13;
+    int hash_code=(b->blockno)% hash_buckets_num;
     /*磁盘块号%13为对应的哈希桶号*/
     b->next = bcache.hash_buckets[hash_code].next;
     b->prev = &bcache.hash_buckets[hash_code];
@@ -73,7 +73,7 @@ static struct buf*
 bget(uint dev, uint blockno)
 {
   struct buf *b;
-  int hash_code=(blockno)% 13;
+  int hash_code=(blockno)% hash_buckets_num;
   /*磁盘块号%13为对应的哈希桶号*/
   acquire(&bcache.lock[hash_code]);
 
@@ -91,26 +91,27 @@ bget(uint dev, uint blockno)
 
   // Not cached.
   // Recycle the least recently used (LRU) unused buffer.
-  // for(b = bcache.head.prev; b != &bcache.head; b = b->prev){
-  //   if(b->refcnt == 0) {
-  //     b->dev = dev;
-  //     b->blockno = blockno;
-  //     b->valid = 0;
-  //     b->refcnt = 1;
-  //     release(&bcache.lock);
-  //     acquiresleep(&b->lock);
-  //     return b;
-  //   }
-  // }
+  /*如果找不到映射的，要先找本地没用的buf*/
+  for(b = bcache.hash_buckets[hash_code].prev; b != &bcache.hash_buckets[hash_code]; b = b->prev){
+    if(b->refcnt == 0) {// no one is waiting for it.
+      b->dev = dev;
+      b->blockno = blockno;
+      b->valid = 0;
+      b->refcnt = 1;
+      release(&bcache.lock[hash_code]);
+      acquiresleep(&b->lock);
+      return b;
+    }
+  }
 
   /*偷🔒*/
-  for (int i = 0; i < 13; i++)
+  for (int i = 0; i < hash_buckets_num; i++)
   {
     if(i!=hash_code){
       acquire(&bcache.lock[i]);
       for (b =bcache.hash_buckets[i].prev; b!=&bcache.hash_buckets[i];b=b->prev)
       {
-        if(b->refcnt==0){ 
+        if(b->refcnt==0){ // no one is waiting for it.
           /*可偷*/
           b->refcnt++;
           b->dev=dev;
@@ -177,7 +178,7 @@ brelse(struct buf *b)
   releasesleep(&b->lock);
 
   /*哈希桶操作*/
-  int hash_code=(b->blockno)% 13;
+  int hash_code=(b->blockno)% hash_buckets_num;
   acquire(&bcache.lock[hash_code]);
   b->refcnt--;
   if (b->refcnt == 0) {
@@ -196,7 +197,7 @@ brelse(struct buf *b)
 /*下面两个函数都统一修改为对哈希桶的操作*/
 void
 bpin(struct buf *b) {
-  int hash_code=(b->blockno)% 13;
+  int hash_code=(b->blockno)% hash_buckets_num;
   acquire(&bcache.lock[hash_code]);
   b->refcnt++;
   release(&bcache.lock[hash_code]);
@@ -204,7 +205,7 @@ bpin(struct buf *b) {
 
 void
 bunpin(struct buf *b) {
-  int hash_code=(b->blockno)% 13;
+  int hash_code=(b->blockno)% hash_buckets_num;
   acquire(&bcache.lock[hash_code]);
   b->refcnt--;
   release(&bcache.lock[hash_code]);
