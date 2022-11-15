@@ -257,7 +257,10 @@ virtio_disk_intr()
     int id = disk.used->elems[disk.used_idx].id;
 
     if(disk.info[id].status != 0)
+    {
+      printf("%d\n",disk.info[id].status);
       panic("virtio_disk_intr status");
+    }
     
     disk.info[id].b->disk = 0;   // disk is done with buf
     wakeup(disk.info[id].b);

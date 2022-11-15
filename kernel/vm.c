@@ -5,6 +5,9 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
+#include "proc.h"
+
 
 /*
  * the kernel's page table.
@@ -45,6 +48,48 @@ kvminit()
   // map the trampoline for trap entry/exit to
   // the highest virtual address in the kernel.
   kvmmap(TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
+}
+
+pagetable_t proc_kvminit(){/*仿照kvminit创建内核页表*/
+  pagetable_t pgtbl = (pagetable_t)kalloc();
+  memset(pgtbl,0,PGSIZE);
+
+  // uart registers
+  // 仿照kvmmap写一个新的映射，指定内核页表，这样可以传入进程自己的的内核页表
+  if(mappages(pgtbl,UART0,PGSIZE,UART0,PTE_R|PTE_W)!=0){
+    panic("proc_kvmmp");
+  }
+
+  // virtio mmio disk interface
+  if(mappages(pgtbl,VIRTIO0,PGSIZE,VIRTIO0,PTE_R|PTE_W)!=0){
+    panic("proc_kvmmp");
+  }
+
+  //CLINT
+  if(mappages(pgtbl,CLINT,0x10000,CLINT,PTE_R|PTE_W)!=0){
+    panic("proc_kvmmp");
+  }
+
+  // PLIC
+  if(mappages(pgtbl,PLIC,0X400000,PLIC,PTE_R|PTE_W)!=0){
+    panic("proc_kvmmp");
+  }
+
+  // map kernel text executable and read-only.
+  if(mappages(pgtbl,KERNBASE,(uint64)etext-KERNBASE,KERNBASE,PTE_R|PTE_X)){
+    panic("proc_kvmmp");
+  }
+
+  // map kernel data and the physical RAM we'll make use of.
+  if(mappages(pgtbl, (uint64)etext, PHYSTOP-(uint64)etext, (uint64)etext, PTE_R | PTE_W) != 0)
+  {panic("proc_kvmmp");}
+
+  // map the trampoline for trap entry/exit to
+  // the highest virtual address in the kernel.
+  if(mappages(pgtbl, TRAMPOLINE, PGSIZE, (uint64)trampoline, PTE_R | PTE_X) != 0)
+  {panic("proc_kvmmp");}
+
+  return pgtbl;
 }
 
 // Switch h/w page table register to the kernel's page table,
@@ -132,7 +177,7 @@ kvmpa(uint64 va)
   pte_t *pte;
   uint64 pa;
   
-  pte = walk(kernel_pagetable, va, 0);
+  pte = walk(myproc()->kernel_pagetable, va, 0);
   if(pte == 0)
     panic("kvmpa");
   if((*pte & PTE_V) == 0)
@@ -157,7 +202,9 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
     if((pte = walk(pagetable, a, 1)) == 0)
       return -1;
     if(*pte & PTE_V)
-      panic("remap");
+    {printf("%p\n",pa);
+    printf("%p\n",va);
+    panic("remap");}
     *pte = PA2PTE(pa) | perm | PTE_V;
     if(a == last)
       break;
@@ -449,4 +496,47 @@ test_pagetable()
   uint64 satp = r_satp();
   uint64 gsatp = MAKE_SATP(kernel_pagetable);
   return satp != gsatp;
+}
+
+/* 
+PTE_V:页表项的Valid，标识该页表项是否有效
+对于叶子页表来说，这个位置为1说明虚拟地址有映射到物理地址，否则说明没有该映射
+对于次页表来说，为1说明有对应的叶子页表，对于根页表说明有对应次页表。
+
+PTE_R|PTE_W|PTE_X 即 页表项的Readable/ Writable/ Executable，
+标识该页表项是可读/写/执行(作为代码运行)的
+通常我们只需要关心叶子页表项的这三个位，因为这代表对应的物理页帧的标志，而不是页表的标志
+对于根页表和次页表的目录项，这三个位往往置为0。
+*/
+void allWalk(pagetable_t pagetable,uint level){
+  for (int i = 0; i < 512; i++)/*512个页表项*/
+  {
+    pte_t pte=pagetable[i];
+    if((pte & PTE_V) && (pte & (PTE_R|PTE_W|PTE_X)) == 0){/*为页目录,递归进入子目录*/
+      uint64 child = PTE2PA(pte);
+      printf("||");
+      for(int j = 0; j< level; j++)
+      {
+        printf(" ||");
+      }
+      printf("%d: pte %p pa %p\n", i, pte, child);
+      allWalk((pagetable_t)child, level + 1);
+    }
+
+    else if(pte & PTE_V)
+    {
+      uint64 child = PTE2PA(pte);
+      printf("||");
+      for(int j = 0; j< level; j++)
+      {
+        printf(" ||");
+      }
+      printf("%d: pte %p pa %p\n", i, pte, child);
+    }
+  }
+}
+
+void vmprint(pagetable_t pagetable){
+  printf("page table %p\n", pagetable);
+  allWalk(pagetable, 0);
 }

@@ -22,6 +22,7 @@ static void freeproc(struct proc *p);
 extern char trampoline[]; // trampoline.S
 
 // initialize the proc table at boot time.
+//boot时期初始化所有的进程：在内核页表上为每个进程创建内核栈，开启页表映射模式
 void
 procinit(void)
 {
@@ -56,6 +57,7 @@ cpuid()
 
 // Return this CPU's cpu struct.
 // Interrupts must be disabled.
+// 返回cpu上的当前进程.
 struct cpu*
 mycpu(void) {
   int id = cpuid();
@@ -86,6 +88,7 @@ allocpid() {
 }
 
 // Look in the process table for an UNUSED proc.
+// 遍历进程表找到第一个状态为UNUSED的进程：分配pid、初始化user page
 // If found, initialize state required to run in the kernel,
 // and return with p->lock held.
 // If there are no free procs, or a memory allocation fails, return 0.
@@ -121,6 +124,21 @@ found:
     return 0;
   }
 
+  /*创建内核页表，并且将其存储到proc结构体里面的kernel_pagetable*/
+  p->kernel_pagetable=proc_kvminit();
+  if(p->kernel_pagetable==0){
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+
+  /*创建内核堆栈的映射*/
+  char *pa=kalloc();
+  if(pa==0){panic("kalloc");}
+  uint64 va=KSTACK(0);//内核栈所在地址
+  if(mappages(p->kernel_pagetable,va,PGSIZE,(uint64)pa,PTE_R|PTE_W)!=0){panic("proc_kvmmp");}
+  p->kstack=va;
+
   // Set up new context to start executing at forkret,
   // which returns to user space.
   memset(&p->context, 0, sizeof(p->context));
@@ -129,6 +147,22 @@ found:
 
   return p;
 }
+
+/*释放内核页表，PTE归零*/
+void free_proc_walk(pagetable_t pagetable){
+  for (int i = 0; i < 512; i++)/*遍历第一级页表*/
+  {
+    pte_t pte=pagetable[i];
+    if((pte & PTE_V) && (pte & (PTE_R|PTE_W|PTE_X))==0){/*这个页表项指向下一级页表*/
+      uint64 child=PTE2PA(pte);
+      pagetable[i]=0;
+      free_proc_walk((pagetable_t)child);
+    }else if(pte & PTE_V){pagetable[i]=0;}
+  }
+  kfree((void*)pagetable);
+}
+
+
 
 // free a proc structure and the data hanging from it,
 // including user pages.
@@ -142,6 +176,17 @@ freeproc(struct proc *p)
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
   p->pagetable = 0;
+
+  /*释放内核页前要释放内核栈*/
+  if(p->kstack){
+    uvmunmap(p->kernel_pagetable,p->kstack,1,1);
+  }
+  p->kstack=0;
+  if(p->kernel_pagetable){
+    free_proc_walk(p->kernel_pagetable);
+  }
+  p->kernel_pagetable=0;
+
   p->sz = 0;
   p->pid = 0;
   p->parent = 0;
@@ -473,7 +518,16 @@ scheduler(void)
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
+
+        w_satp(MAKE_SATP(p->kernel_pagetable));
+        /*设置最高级页目录地址的寄存器SATP*/
+        sfence_vma();
+        /*清空当前TLB*/
+
         swtch(&c->context, &p->context);
+
+        kvminithart();
+        /*加载内核页表*/
 
         // Process is done running for now.
         // It should have changed its p->state before coming back.
