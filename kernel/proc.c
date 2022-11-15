@@ -148,18 +148,19 @@ found:
   return p;
 }
 
-/*释放内核页表，PTE归零*/
-void free_proc_walk(pagetable_t pagetable){
+/*释放内核页表，并且让PTE归零*/
+void free_proc_walk(pagetable_t pgtbl){
   for (int i = 0; i < 512; i++)/*遍历第一级页表*/
   {
-    pte_t pte=pagetable[i];
-    if((pte & PTE_V) && (pte & (PTE_R|PTE_W|PTE_X))==0){/*这个页表项指向下一级页表*/
-      uint64 child=PTE2PA(pte);
-      pagetable[i]=0;
-      free_proc_walk((pagetable_t)child);
-    }else if(pte & PTE_V){pagetable[i]=0;}
+    pte_t pte=pgtbl[i];
+    if((pte & PTE_V) && (pte & (PTE_R|PTE_W|PTE_X))==0){
+      /*这个页表项指向下一级页表*/
+      uint64 children=PTE2PA(pte);
+      pgtbl[i]=0;
+      free_proc_walk((pagetable_t)children);
+    }else if(pte & PTE_V){pgtbl[i]=0;}
   }
-  kfree((void*)pagetable);
+  kfree((void*)pgtbl);
 }
 
 
@@ -266,6 +267,9 @@ userinit(void)
   uvminit(p->pagetable, initcode, sizeof(initcode));
   p->sz = PGSIZE;
 
+  /*调用*/
+  user_to_kernel_copy(p->pagetable,p->kernel_pagetable,0,p->sz);
+
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
   p->trapframe->sp = PGSIZE;  // user stack pointer
@@ -287,6 +291,10 @@ growproc(int n)
   struct proc *p = myproc();
 
   sz = p->sz;
+
+  /*限制用户内存大小*/
+  if(sz+n>=PLIC){return -1;}
+
   if(n > 0){
     if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
       return -1;
@@ -319,6 +327,9 @@ fork(void)
     return -1;
   }
   np->sz = p->sz;
+
+  /*调用*/
+  user_to_kernel_copy(np->pagetable, np->kernel_pagetable, 0, np->sz);
 
   np->parent = p;
 
@@ -716,7 +727,7 @@ either_copyin(void *dst, int user_src, uint64 src, uint64 len)
 {
   struct proc *p = myproc();
   if(user_src){
-    return copyin(p->pagetable, dst, src, len);
+    return copyin_new(p->pagetable, dst, src, len);
   } else {
     memmove(dst, (char*)src, len);
     return 0;

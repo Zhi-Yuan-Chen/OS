@@ -51,6 +51,12 @@ kvminit()
 }
 
 pagetable_t proc_kvminit(){/*仿照kvminit创建内核页表*/
+/*
+*   PTE_R|PTE_W|PTE_X 即 页表项的Readable/ Writable/ Executable，
+*   标识该页表项是可读/写/执行(作为代码运行)的
+*   通常我们只需要关心叶子页表项的这三个位，因为这代表对应的物理页帧的标志，而不是页表的标志
+*   对于根页表和次页表的目录项，这三个位往往置为0。
+*/
   pagetable_t pgtbl = (pagetable_t)kalloc();
   memset(pgtbl,0,PGSIZE);
 
@@ -499,44 +505,51 @@ test_pagetable()
 }
 
 /* 
-PTE_V:页表项的Valid，标识该页表项是否有效
-对于叶子页表来说，这个位置为1说明虚拟地址有映射到物理地址，否则说明没有该映射
-对于次页表来说，为1说明有对应的叶子页表，对于根页表说明有对应次页表。
-
-PTE_R|PTE_W|PTE_X 即 页表项的Readable/ Writable/ Executable，
-标识该页表项是可读/写/执行(作为代码运行)的
-通常我们只需要关心叶子页表项的这三个位，因为这代表对应的物理页帧的标志，而不是页表的标志
-对于根页表和次页表的目录项，这三个位往往置为0。
+* PTE_V:页表项的Valid，标识该页表项是否有效
+* 对于叶子页表来说，这个位置为1→虚拟地址有映射到物理地址，否则没有该映射
+* 对于次页表来说，为1→有对应的叶子页表，对于根页表说明有对应次页表。
 */
-void allWalk(pagetable_t pagetable,uint level){
+void AllWALK(pagetable_t pgtbl,uint level){
   for (int i = 0; i < 512; i++)/*512个页表项*/
   {
-    pte_t pte=pagetable[i];
+    pte_t pte=pgtbl[i];
     if((pte & PTE_V) && (pte & (PTE_R|PTE_W|PTE_X)) == 0){/*为页目录,递归进入子目录*/
-      uint64 child = PTE2PA(pte);
+      uint64 children = PTE2PA(pte);
       printf("||");
-      for(int j = 0; j< level; j++)
-      {
+      for(int j = 0; j< level; j++){
         printf(" ||");
       }
-      printf("%d: pte %p pa %p\n", i, pte, child);
-      allWalk((pagetable_t)child, level + 1);
+      printf("%d: pte %p pa %p\n", i, pte, children);
+      AllWALK((pagetable_t)children, level + 1);/*递归*/
     }
+
 
     else if(pte & PTE_V)
     {
-      uint64 child = PTE2PA(pte);
+      uint64 children = PTE2PA(pte);
       printf("||");
-      for(int j = 0; j< level; j++)
-      {
+      for(int k = 0; k< level; k++){
         printf(" ||");
       }
-      printf("%d: pte %p pa %p\n", i, pte, child);
+      printf("%d: pte %p pa %p\n", i, pte, children);
     }
   }
 }
 
 void vmprint(pagetable_t pagetable){
   printf("page table %p\n", pagetable);
-  allWalk(pagetable, 0);
+  AllWALK(pagetable, 0);
+}
+
+/*
+创建一个从用户态页表复制到内核态页表的函数
+*/
+void user_to_kernel_copy(pagetable_t a, pagetable_t b, uint64 begin, uint64 end)
+{
+  pte_t *user,*kernel;
+  for(uint64 i = begin; i < end; i += PGSIZE){
+    user = walk(a, i, 0);
+    kernel = walk(b, i, 1);
+    *kernel = (*user) & (~PTE_U);
+  }
 }

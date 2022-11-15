@@ -49,6 +49,11 @@ sys_sbrk(void)
   addr = myproc()->sz;
   if(growproc(n) < 0)
     return -1;
+  
+  /*内核页表内容是根据用户页表改变，所以只增加/覆盖内容，不能删除内容*/
+  if(n>0){
+    user_to_kernel_copy(myproc()->pagetable,myproc()->kernel_pagetable,addr,addr+n);
+  }
   return addr;
 }
 
